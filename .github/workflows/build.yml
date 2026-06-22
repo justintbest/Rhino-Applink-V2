@@ -29,9 +29,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist/net48 | Out-Null
           New-Item -ItemType Directory -Force -Path dist/net7.0 | Out-Null
+          New-Item -ItemType Directory -Force -Path dist/BowlConnector | Out-Null
           Copy-Item BowlConnector.rui dist/BowlConnector.rui
           Copy-Item bin/x64/Release/net48/BowlConnector.dll dist/net48/BowlConnector.rhp
           Copy-Item bin/x64/Release/net7.0-windows/BowlConnector.dll dist/net7.0/BowlConnector.rhp
+          Copy-Item BowlConnector/rhino_api_sender.py dist/BowlConnector/rhino_api_sender.py
 
       - uses: actions/upload-artifact@v4
         with:

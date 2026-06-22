@@ -1,0 +1,39 @@
+name: Build BowlConnector
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            7.0.x
+
+      - name: Restore
+        run: dotnet restore BowlConnector.csproj
+
+      - name: Build net48
+        run: dotnet build BowlConnector.csproj -c Release -f net48 -p:Platform=x64
+
+      - name: Build net7.0-windows
+        run: dotnet build BowlConnector.csproj -c Release -f net7.0-windows -p:Platform=x64
+
+      - name: Stage dist folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/net48 | Out-Null
+          New-Item -ItemType Directory -Force -Path dist/net7.0 | Out-Null
+          Copy-Item BowlConnector.rui dist/BowlConnector.rui
+          Copy-Item bin/x64/Release/net48/BowlConnector.dll dist/net48/BowlConnector.rhp
+          Copy-Item bin/x64/Release/net7.0-windows/BowlConnector.dll dist/net7.0/BowlConnector.rhp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BowlConnector-package
+          path: dist/**

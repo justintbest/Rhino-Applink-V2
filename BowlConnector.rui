@@ -17,24 +17,27 @@
         <locale_1033>Bowl Connector</locale_1033>
       </text>
       <tool_bar_items>
-        <tool_bar_item guid="1a2b3c4d-0001-0001-0001-000000000003" button_style="normal" button_display_mode="control" button_display_mode_ex="0">
-          <macro_id guid="1a2b3c4d-0001-0001-0001-000000000004"/>
-        </tool_bar_item>
+        <tool_bar_item guid="1a2b3c4d-0001-0001-0001-000000000003" macro_id="1a2b3c4d-0001-0001-0001-000000000004" button_style="normal" button_display_mode="control" button_display_mode_ex="0"/>
       </tool_bar_items>
     </tool_bar>
   </tool_bars>
   <macros>
     <macro_item guid="1a2b3c4d-0001-0001-0001-000000000004">
-      <text>
+      <name>
         <locale_1033>Bowl Connector</locale_1033>
-      </text>
+      </name>
       <tooltip>
         <locale_1033>Open the Seating Bowl Generator connector panel</locale_1033>
       </tooltip>
       <button_text>
         <locale_1033>Bowl</locale_1033>
       </button_text>
-      <script>! _NoEcho _RunPythonScript "import glob,os,sys; p=sorted(glob.glob(os.path.expandvars(r'%APPDATA%\\McNeel\\Rhinoceros\\packages\\8.0\\bowl-connector\\*\\BowlConnector\\rhino_api_sender.py'))); exec(open(p[-1]).read()) if p else None"</script>
+      <left_macro>
+        <locale_1033>! _NoEcho _RunPythonScript "import glob,os,sys; p=sorted(glob.glob(os.path.expandvars(r'%APPDATA%\\McNeel\\Rhinoceros\\packages\\8.0\\bowl-connector\\*\\BowlConnector\\rhino_api_sender.py'))); exec(open(p[-1]).read()) if p else None"</locale_1033>
+      </left_macro>
+      <right_macro>
+        <locale_1033></locale_1033>
+      </right_macro>
     </macro_item>
   </macros>
 </RhinoUI>

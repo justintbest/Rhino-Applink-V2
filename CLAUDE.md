@@ -15,13 +15,13 @@ runs `_RunPythonScript` directly, globbing for the installed copy of
 `BowlConnector/rhino_api_sender.py` under the Yak packages folder:
 
 ```
-%APPDATA%\McNeel\Rhinoceros\packages\8.0\bowl-connector-1-0-0-1\*\BowlConnector\rhino_api_sender.py
+%APPDATA%\McNeel\Rhinoceros\packages\8.0\bowl-connector-v1\*\BowlConnector\rhino_api_sender.py
 ```
 
 That means **two things have to be true simultaneously** for the button to
 work after install, beyond just the plugin loading:
 
-1. The installed Yak package folder name must be `bowl-connector-1-0-0-1`
+1. The installed Yak package folder name must be `bowl-connector-v1`
    (lowercase, hyphenated) — this comes from `name:` in `manifest.yml`,
    **not** from the assembly/csproj name (`BowlConnector`). These are
    allowed to differ and it's easy to forget to keep them in sync.
@@ -76,7 +76,7 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
    ```
    (Note the `&` call operator — PowerShell needs it to execute a quoted
    path; Command Prompt would not.) This reads `manifest.yml` and produces
-   a `.yak` file, e.g. `bowl-connector-1-0-0-1-1.0.0.1-rh8_0-any.yak`.
+   a `.yak` file, e.g. `bowl-connector-v1-1.0.0.1-rh8_0-any.yak`.
 7. **User installs it by dragging the `.yak` file directly onto the open
    Rhino viewport.** This is the fastest local test loop — no need to
    register a custom package source in Rhino's Advanced options for this.
@@ -103,30 +103,28 @@ same as any other source file.
   *and* a list item below it; it must be either `authors: Name` OR
   `authors:` followed by `- Name` on the next line, never both.
 - `name:` in `manifest.yml` determines the install folder name Yak uses —
-  it has to be `bowl-connector-1-0-0-1` to match what the `.rui` macro globs for,
+  it has to be `bowl-connector-v1` to match what the `.rui` macro globs for,
   not `BowlConnector`. (This was wrong in an earlier hand-edited copy the
   user had locally — the repo's tracked copy has the correct lowercase
   value.)
-- **Package name embeds the version number, e.g. `bowl-connector-1-0-0-1`.**
-  This was deliberately chosen by the user. **The public Yak server
-  rejects package names containing dots** — `yak push` fails with
-  `400: Package name can only include letters, numbers, dashes, and
-  underscores` — so the version inside the *name* uses dashes
-  (`1-0-0-1`), even though the separate `version:` field in
-  `manifest.yml` still uses normal dots (`1.0.0.1`). Don't conflate the
-  two formats. Three consequences to keep in mind on every future version
-  bump:
-  1. The `name:` value (dash-separated version) and `version:` value
-     (dot-separated) in `manifest.yml` must be bumped together and kept
-     in sync (e.g. `name: bowl-connector-1-0-0-2` / `version: 1.0.0.2`),
-     otherwise the install folder name and the glob path below won't
-     agree.
-  2. The hardcoded package-name segment in **both** `BowlConnector.rui`'s
-     `<left_macro>` glob and `BowlConnectorCommand.cs`'s `script` glob
-     must be updated to match on every bump — there are three places this
-     string lives (`manifest.yml`, `.rui`, `.cs`), not two, when using
-     this naming scheme. Forgetting one means the glob won't find the
-     newly installed copy.
+- **Package name is `bowl-connector-v1`** — chosen deliberately to be
+  stable across version bumps, unlike an earlier scheme that embedded the
+  exact version (`bowl-connector-1-0-0-1`), which would have required
+  renaming the package on every release. The separate `version:` field
+  in `manifest.yml` still tracks the actual dotted version (e.g.
+  `1.0.0.1`) independently — only the major-version marker (`v1`) lives
+  in the *name*, and that only needs to change on an actual breaking/
+  major version bump (`bowl-connector-v2`, etc.), not every patch release.
+  Two things to remember if that ever happens:
+  1. The `name:` value in `manifest.yml` and the hardcoded package-name
+     segment in **both** `BowlConnector.rui`'s `<left_macro>` glob and
+     `BowlConnectorCommand.cs`'s `script` glob must all three be updated
+     together — there are three places this string lives, not one.
+  2. **The public Yak server rejects package names containing dots** —
+     `yak push` fails with `400: Package name can only include letters,
+     numbers, dashes, and underscores` — so if the name ever needs to
+     reference a version number directly again, use dashes (`v1`,
+     `1-0-0-1`), never dots.
   - Earlier in this project, the package was instead named
     `bowl-connector-justin-dev` to dodge a collision with a different,
     unrelated package published on the public Yak server under the plain
@@ -258,7 +256,7 @@ BowlConnector.rui               - the toolbar file; macro schema fixed to use le
                                    right_macro + macro_id attribute (see gotcha above)
 BowlConnector/rhino_api_sender.py - the actual Eto Forms script the toolbar button runs;
                                    must stay at this exact relative path
-manifest.yml                    - the yak package manifest; name: bowl-connector-1-0-0-1 must stay
+manifest.yml                    - the yak package manifest; name: bowl-connector-v1 must stay
                                    lowercase-hyphenated to match the .rui macro's glob path
 .github/workflows/build.yml     - builds both targets, renames .dll -> .rhp, copies
                                    BowlConnector/rhino_api_sender.py and manifest.yml into
@@ -294,4 +292,4 @@ manifest.yml                    - the yak package manifest; name: bowl-connector
 - **Button runs but errors immediately**: check Rhino's command-line output
   for a Python traceback — almost always means `rhino_api_sender.py` either
   isn't bundled at the right path, or the installed package folder name
-  doesn't match `bowl-connector-1-0-0-1`.
+  doesn't match `bowl-connector-v1`.

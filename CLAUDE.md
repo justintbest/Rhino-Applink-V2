@@ -175,6 +175,42 @@ nothing visibly happens, point 3 (the `__name__` guard) is the first thing
 to check — it fails *silently*, unlike points 1 and 2 which throw visible
 errors.
 
+## Current open issue (as of this writing — typed command still not working)
+
+State of the world right now, for whoever picks this up next:
+
+- **Typing the raw macro directly on the Rhino command line works.**
+  Confirmed multiple times — this exact line opens the Eto Forms panel:
+  ```
+  ! _-RunPythonScript (import glob,os; p=sorted(glob.glob(os.path.join(os.path.expandvars('%APPDATA%'),'McNeel','Rhinoceros','packages','8.0','bowl-connector-justin-dev','*','BowlConnector','rhino_api_sender.py'))); exec compile(open(p[-1]).read(), p[-1], 'exec') in {'__name__': '__main__'})
+  ```
+- **The compiled `BowlConnector` command (from `BowlConnectorCommand.cs`)
+  has never been confirmed working**, even before the package rename. It's
+  recognized (no "Unknown command" error) but does nothing — no error, no
+  popup. Confirmed the installed `.rhp` is fresh (timestamp matches the
+  latest install), so it is not a stale-build issue.
+- Added a leading `! ` to the `RunScript` call in `BowlConnectorCommand.cs`
+  (commit `c028db3`) on the theory that calling `RunScript` from *inside*
+  an already-running `RunCommand` is nested in Rhino's command stack
+  differently than typing the macro directly, and the `!` (cancel current
+  command) that the `.rui` macro already has might be required here too.
+  **This fix has NOT yet been confirmed working** — build `28045926738`
+  succeeded but the user has not yet tested the reinstalled command as of
+  this note.
+- **The toolbar button itself has also not been confirmed working.**
+  Separately, the button doesn't even appear to show up — Options →
+  Toolbars shows the `BowlConnector` toolbar group exists, but no button
+  was visibly found. Next step to try: right-click an empty area of any
+  existing toolbar dock → look for "Bowl Connector" in the popup list of
+  toolbar groups → check it to force the floating/docked toolbar window
+  open. Not yet confirmed whether this surfaces the button.
+- Next things to try if the `!` fix doesn't work: consider that
+  `RhinoApp.RunScript` called synchronously from inside `RunCommand` may
+  need to be deferred (e.g. via `RhinoApp.Idle` one-shot handler) rather
+  than called directly, since Rhino may not let a nested script-running
+  command fully take over the UI/command stack while the outer command is
+  still considered "active."
+
 ## Command-based invocation
 
 In addition to the toolbar button, the plugin now registers a real Rhino

@@ -15,13 +15,13 @@ runs `_RunPythonScript` directly, globbing for the installed copy of
 `BowlConnector/rhino_api_sender.py` under the Yak packages folder:
 
 ```
-%APPDATA%\McNeel\Rhinoceros\packages\8.0\bowl-connector\*\BowlConnector\rhino_api_sender.py
+%APPDATA%\McNeel\Rhinoceros\packages\8.0\bowl-connector-justin-dev\*\BowlConnector\rhino_api_sender.py
 ```
 
 That means **two things have to be true simultaneously** for the button to
 work after install, beyond just the plugin loading:
 
-1. The installed Yak package folder name must be `bowl-connector`
+1. The installed Yak package folder name must be `bowl-connector-justin-dev`
    (lowercase, hyphenated) — this comes from `name:` in `manifest.yml`,
    **not** from the assembly/csproj name (`BowlConnector`). These are
    allowed to differ and it's easy to forget to keep them in sync.
@@ -76,7 +76,7 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
    ```
    (Note the `&` call operator — PowerShell needs it to execute a quoted
    path; Command Prompt would not.) This reads `manifest.yml` and produces
-   a `.yak` file, e.g. `bowl-connector-1.0.0-rh8_0-any.yak`.
+   a `.yak` file, e.g. `bowl-connector-justin-dev-1.0.0.1-rh8_0-any.yak`.
 7. **User installs it by dragging the `.yak` file directly onto the open
    Rhino viewport.** This is the fastest local test loop — no need to
    register a custom package source in Rhino's Advanced options for this.
@@ -103,10 +103,23 @@ same as any other source file.
   *and* a list item below it; it must be either `authors: Name` OR
   `authors:` followed by `- Name` on the next line, never both.
 - `name:` in `manifest.yml` determines the install folder name Yak uses —
-  it has to be `bowl-connector` to match what the `.rui` macro globs for,
+  it has to be `bowl-connector-justin-dev` to match what the `.rui` macro globs for,
   not `BowlConnector`. (This was wrong in an earlier hand-edited copy the
   user had locally — the repo's tracked copy has the correct lowercase
   value.)
+- **Package name is deliberately `bowl-connector-justin-dev`, not
+  `bowl-connector`.** There is already a *different*, unrelated package
+  published on the public Yak server under the plain name `bowl-connector`
+  (authors "Hailong Li, Justin Best", pointing at a different backend URL
+  `https://bowl-backend-x0jz.onrender.com`). Rhino's Package Manager
+  matches packages by name against the online registry, so a locally
+  built/dragged-in `.yak` named `bowl-connector` could get shadowed or
+  confused with that unrelated published package, making it look like
+  local rebuilds "aren't taking effect" when actually the old online
+  version was still the one loaded. The `-justin-dev` suffix avoids any
+  collision during local dev/test. If this package is ever actually
+  published to the public Yak server for real users, the name should be
+  reconsidered (and definitely not collide with the existing one).
 
 ## `.rui` macro schema gotcha already hit once
 
@@ -191,7 +204,7 @@ BowlConnector.rui               - the toolbar file; macro schema fixed to use le
                                    right_macro + macro_id attribute (see gotcha above)
 BowlConnector/rhino_api_sender.py - the actual Eto Forms script the toolbar button runs;
                                    must stay at this exact relative path
-manifest.yml                    - the yak package manifest; name: bowl-connector must stay
+manifest.yml                    - the yak package manifest; name: bowl-connector-justin-dev must stay
                                    lowercase-hyphenated to match the .rui macro's glob path
 .github/workflows/build.yml     - builds both targets, renames .dll -> .rhp, copies
                                    BowlConnector/rhino_api_sender.py and manifest.yml into
@@ -227,4 +240,4 @@ manifest.yml                    - the yak package manifest; name: bowl-connector
 - **Button runs but errors immediately**: check Rhino's command-line output
   for a Python traceback — almost always means `rhino_api_sender.py` either
   isn't bundled at the right path, or the installed package folder name
-  doesn't match `bowl-connector`.
+  doesn't match `bowl-connector-justin-dev`.

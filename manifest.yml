@@ -4,5 +4,5 @@ version: 1.0.0.2
 authors:
 - Justin Best
 - Hailong Li
-description: Loader plugin so BowlConnector.rui auto-loads at Rhino startup
+description: Connector for the Seating Bowl Generator
 url: https://github.com/justintbest/Rhino-Applink-V2

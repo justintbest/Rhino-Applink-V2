@@ -52,8 +52,8 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
 2. **Pushing triggers `.github/workflows/build.yml` automatically.** It
    restores RhinoCommon, builds both `net48` and `net7.0-windows` targets,
    renames each `.dll` → `.rhp`, and stages everything (including
-   `BowlConnector/rhino_api_sender.py`) into a `dist/` folder, uploaded as
-   the artifact `BowlConnector-package`.
+   `BowlConnector/rhino_api_sender.py` and `manifest.yml`) into a `dist/`
+   folder, uploaded as the artifact `BowlConnector-package`.
 3. **Poll the run via the GitHub MCP tools** (`actions_list` /
    `actions_get` with `get_workflow_run`) until `status` is `completed` and
    `conclusion` is `success`. Don't tell the user to "go check" without
@@ -63,9 +63,13 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
    `BowlConnector-package`.
 5. **User downloads and unzips it locally**, into the *same* folder they've
    been using across the whole project (e.g. `Downloads\BowlConnector-package`)
-   — overwriting the previous `BowlConnector.rui`, `net48/`, `net7.0/`,
-   `BowlConnector/` contents, but keeping their existing `manifest.yml` and
-   deleting the previous `.yak` file so it's obvious which one is current.
+   — this overwrites everything, including `manifest.yml`, since it's now
+   tracked in the repo and built fresh every time. Delete the previous
+   `.yak` file so it's obvious which one is current. If the user needs a
+   custom `manifest.yml` edit (e.g. version bump), make that edit in the
+   repo's `manifest.yml` and push it like any other source file — don't
+   tell the user to hand-edit their local copy, since it gets overwritten
+   on the next artifact download anyway.
 6. **User runs (in PowerShell, from inside that folder):**
    ```powershell
    & "C:\Program Files\Rhino 8\System\Yak.exe" build
@@ -85,7 +89,13 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
    text Rhino parsed out of the `.rui` — empty Command boxes mean the
    `.rui`'s macro schema didn't parse, not that anything is "missing."
 
-## `manifest.yml` gotchas already hit once
+## `manifest.yml` is now tracked in the repo
+
+`manifest.yml` lives at the repo root and is staged into `dist/` by
+`build.yml` like every other output file. The user no longer maintains
+their own local copy — every artifact download already contains a correct
+one. Edit it in the repo if it ever needs to change (version bump, etc.),
+same as any other source file.
 
 - `yak spec` generates placeholder lines `- <author>` and `url: <url>`
   literally — these must be replaced with real values or `yak build` fails
@@ -94,7 +104,9 @@ This is the cycle to repeat every time `PlugIn.cs`, `BowlConnector.csproj`,
   `authors:` followed by `- Name` on the next line, never both.
 - `name:` in `manifest.yml` determines the install folder name Yak uses —
   it has to be `bowl-connector` to match what the `.rui` macro globs for,
-  not `BowlConnector`.
+  not `BowlConnector`. (This was wrong in an earlier hand-edited copy the
+  user had locally — the repo's tracked copy has the correct lowercase
+  value.)
 
 ## `.rui` macro schema gotcha already hit once
 
@@ -141,9 +153,11 @@ BowlConnector.rui               - the toolbar file; macro schema fixed to use le
                                    right_macro + macro_id attribute (see gotcha above)
 BowlConnector/rhino_api_sender.py - the actual Eto Forms script the toolbar button runs;
                                    must stay at this exact relative path
+manifest.yml                    - the yak package manifest; name: bowl-connector must stay
+                                   lowercase-hyphenated to match the .rui macro's glob path
 .github/workflows/build.yml     - builds both targets, renames .dll -> .rhp, copies
-                                   BowlConnector/rhino_api_sender.py into dist/, uploads
-                                   as artifact "BowlConnector-package"
+                                   BowlConnector/rhino_api_sender.py and manifest.yml into
+                                   dist/, uploads as artifact "BowlConnector-package"
 ```
 
 ## Things to NOT do

@@ -1,0 +1,7 @@
+---
+name: bowl-connector
+version: 1.0.0.0
+authors:
+- Justin Best
+description: Loader plugin so BowlConnector.rui auto-loads at Rhino startup
+url: https://github.com/justintbest/Rhino-Applink-V2

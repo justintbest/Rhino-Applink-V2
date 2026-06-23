@@ -33,7 +33,7 @@
         <locale_1033>Bowl</locale_1033>
       </button_text>
       <left_macro>
-        <locale_1033>! _-RunPythonScript (import glob,os; p=sorted(glob.glob(os.path.join(os.path.expandvars('%APPDATA%'),'McNeel','Rhinoceros','packages','8.0','bowl-connector-1.0.0.1','*','BowlConnector','rhino_api_sender.py'))); exec compile(open(p[-1]).read(), p[-1], 'exec') in {'__name__': '__main__'})</locale_1033>
+        <locale_1033>! _-RunPythonScript (import glob,os; p=sorted(glob.glob(os.path.join(os.path.expandvars('%APPDATA%'),'McNeel','Rhinoceros','packages','8.0','bowl-connector-1-0-0-1','*','BowlConnector','rhino_api_sender.py'))); exec compile(open(p[-1]).read(), p[-1], 'exec') in {'__name__': '__main__'})</locale_1033>
       </left_macro>
       <right_macro>
         <locale_1033></locale_1033>

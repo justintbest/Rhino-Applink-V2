@@ -244,6 +244,41 @@ automatically — there's only one place the glob path is duplicated (here
 and in `BowlConnector.rui`), so if the glob path or package name ever
 changes, update both files.
 
+## Published to the public Yak server
+
+`bowl-connector-v1` is now live on `https://yak.rhino3d.com/`, confirmed via
+successful `yak push` output ("Successfully published bowl-connector-v1
+(1.0.0.1) to https://yak.rhino3d.com/"). Anyone can install it through
+Rhino's Package Manager by searching `bowl-connector-v1` — it's no longer
+just a local drag-and-drop test package.
+
+- **Versions are immutable on the server.** Once a version is pushed, its
+  manifest content (authors, description, etc.) can't be edited in place,
+  and re-pushing the *same* version number is rejected even if the file
+  changed. Any future manifest-only or code change that needs to go live
+  again requires bumping `version:` in `manifest.yml` first.
+- `1.0.0.1` was pushed with `authors: [Justin Best]` and a placeholder
+  description, then yanked (`yak yank bowl-connector-v1 1.0.0.1` — yanking
+  unlists from the server, it does not free up the version number for
+  reuse) so it could be replaced with corrected metadata.
+- `1.0.0.2` is the current correct version: `authors: [Justin Best,
+  Hailong Li]`, `description: Connector for the Seating Bowl Generator`.
+  Pushed and live.
+- Rhino's local Plug-ins/Package-Manager detail panel for an
+  **installed-but-not-yet-published** local test build often shows blank
+  Author/Description/Date-published/Url fields — those particular fields
+  are populated from the **online server's** index, not read live from the
+  local manifest baked into the installed `.yak`. Don't take blank fields
+  there as evidence the manifest data is wrong; check the actual `yak
+  build` console output (it echoes the full manifest it packaged) or the
+  package's *online* Package Manager listing instead.
+- For a manifest-only change (no source/code edit), you don't need to wait
+  on a GitHub Actions build at all if you're in a hurry — hand-edit
+  `manifest.yml` directly in the local package folder and rerun `yak
+  build` there. Still push the same edit to the repo afterward so the next
+  artifact download stays in sync (the repo's tracked copy is the source
+  of truth going forward, per the workflow above).
+
 ## Current state of the repo
 
 ```
@@ -274,6 +309,8 @@ manifest.yml                    - the yak package manifest; name: bowl-connector
   before anything has shipped.
 - Don't run `yak push` (publish to the public Yak server) without the user
   explicitly asking — always test locally via drag-and-drop install first.
+  (The package has now been published once already — this rule still
+  applies to every future version, not just the first one.)
 
 ## If something fails
 

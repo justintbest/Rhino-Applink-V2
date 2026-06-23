@@ -112,12 +112,31 @@ has an empty Command field in Rhino's Button Editor, this exact schema
 mismatch is the first thing to check — it is not a missing-file or
 broken-install problem, the XML tag names are just wrong.
 
+## Command-based invocation
+
+In addition to the toolbar button, the plugin now registers a real Rhino
+command so the same script can be run by typing it on the command line.
+Rhino command names cannot contain spaces, so typing `BowlConnector`
+(no space) runs it — Rhino's command-line autocomplete will still surface
+it if the user types "Bowl Connector" with a space and picks it from the
+matches, but the actual stored `EnglishName` is the no-space form.
+
+`BowlConnectorCommand.cs` defines this command. Its `RunCommand` calls
+`RhinoApp.RunScript` with the exact same `_RunPythonScript` glob one-liner
+used in the `.rui` macro, so both invocation paths (button click, typed
+command) run the identical script-loading logic and stay in sync
+automatically — there's only one place the glob path is duplicated (here
+and in `BowlConnector.rui`), so if the glob path or package name ever
+changes, update both files.
+
 ## Current state of the repo
 
 ```
 BowlConnector.csproj            - multi-targets net48 (Rhino 7) + net7.0-windows (Rhino 8)
 PlugIn.cs                       - minimal PlugIn subclass, LoadTime = AtStartup, real GUID
                                    already assigned — do not regenerate it on future builds
+BowlConnectorCommand.cs         - registers the "BowlConnector" command, runs the same
+                                   _RunPythonScript glob as the toolbar button macro
 BowlConnector.rui               - the toolbar file; macro schema fixed to use left_macro/
                                    right_macro + macro_id attribute (see gotcha above)
 BowlConnector/rhino_api_sender.py - the actual Eto Forms script the toolbar button runs;
@@ -129,12 +148,6 @@ BowlConnector/rhino_api_sender.py - the actual Eto Forms script the toolbar butt
 
 ## Things to NOT do
 
-- Don't add commands to the plugin unless explicitly asked to switch
-  architectures — it's currently pure scaffolding (no commands), and the
-  toolbar button works by running a Python script glob, not by calling a
-  registered Rhino command. Adding a command is a real, deliberate
-  architecture change (discussed but not yet done as of this writing), not
-  a casual addition.
 - Don't modify `BowlConnector.rui`'s toolbar layout/button text/tooltip
   content unless asked — only the macro *schema* has been fixed, the
   visual/UX design is otherwise final.

@@ -124,6 +124,44 @@ has an empty Command field in Rhino's Button Editor, this exact schema
 mismatch is the first thing to check — it is not a missing-file or
 broken-install problem, the XML tag names are just wrong.
 
+## `_RunPythonScript` inline-code gotchas (hit three in a row, fixed now)
+
+Both the `.rui` macro and `BowlConnectorCommand.cs` run the actual
+`rhino_api_sender.py` payload by gluing together a glob + inline Python
+one-liner passed to Rhino's script-running command. Getting this right took
+three separate fixes — all three matter, don't regress any of them:
+
+1. **Quotes vs. parentheses.** `_RunPythonScript "<code>"` does NOT run
+   `<code>` as inline Python — Rhino treats the quoted string as a
+   **filename** to open, and silently falls back to a file-picker dialog
+   when it isn't one. Inline code must use the hyphenated command form with
+   parentheses instead: `_-RunPythonScript (<code>)`.
+2. **No backslash paths.** Avoid `r'...\\...'`-style Windows paths in the
+   glob entirely — backslash-escaping behavior differs between how `.rui`
+   macro text is parsed vs. how a C# string literal passed through
+   `RhinoApp.RunScript` is parsed, and it's easy to end up one layer off in
+   either direction (this happened twice). Use
+   `os.path.join(os.path.expandvars('%APPDATA%'), 'McNeel', 'Rhinoceros', ...)`
+   instead — no backslashes to get wrong, no escaping-layer ambiguity.
+3. **`exec` is a Python 2 statement here, not a function**, and the
+   `rhino_api_sender.py` payload only calls its `main()` under
+   `if __name__ == "__main__":`. Plain `exec(open(path).read())` either
+   throws `SyntaxError: unexpected token 'exec'` (if used inside an
+   expression) or runs silently with **no error and no popup** (because the
+   inherited `__name__` from the calling script's namespace isn't
+   `"__main__"`, so the guard skips `main()`). The fix is the Python 2
+   `exec ... in <namespace>` statement form, explicitly forcing `__name__`:
+   ```python
+   exec compile(open(p[-1]).read(), p[-1], 'exec') in {'__name__': '__main__'}
+   ```
+   This is the only form confirmed working end-to-end (opens the Eto Forms
+   panel) as of this writing.
+
+If the toolbar button or `BowlConnector` command runs with no error but
+nothing visibly happens, point 3 (the `__name__` guard) is the first thing
+to check — it fails *silently*, unlike points 1 and 2 which throw visible
+errors.
+
 ## Command-based invocation
 
 In addition to the toolbar button, the plugin now registers a real Rhino

@@ -519,12 +519,34 @@ class BowlConnectorDialog(forms.Form):
         self.btn_close.Size = drawing.Size(100, 30)
         self.btn_close.Click += self.on_close
 
-        self.tab_control = forms.TabControl()
-        self.tab_control.BackgroundColor = COL_BG
-        self.tab_control.Pages.Add(self._build_aline_tab())
-        self.tab_control.Pages.Add(self._build_void_tab())
-        self.tab_control.Pages.Add(self._build_aisle_tab())
-        self.tab_control.Pages.Add(self._build_pull_tab())
+        # Eto's native TabControl/TabPage headers use OS-themed text that
+        # can't be recolored (they rendered unreadable-dark on this dialog's
+        # background) — use a plain button row instead, styled like every
+        # other button here, so the tab labels are always legible.
+        self._tab_names = ["A-Line", "Void", "Aisle", "Pull"]
+        self._tab_layouts = {
+            "A-Line": self._build_aline_tab(),
+            "Void": self._build_void_tab(),
+            "Aisle": self._build_aisle_tab(),
+            "Pull": self._build_pull_tab(),
+        }
+        self._tab_buttons = {}
+
+        tab_bar = forms.DynamicLayout()
+        tab_bar.BackgroundColor = COL_BG
+        tab_bar.Spacing = drawing.Size(4, 0)
+        tab_cells = []
+        for name in self._tab_names:
+            b = style_button(forms.Button())
+            b.Text = name
+            b.Width = 80
+            b.Click += self._make_tab_click_handler(name)
+            self._tab_buttons[name] = b
+            tab_cells.append(b)
+        tab_bar.AddRow(*tab_cells)
+
+        self.tab_content_panel = forms.Panel()
+        self.tab_content_panel.BackgroundColor = COL_BG
 
         # ── Top-level layout ─────────────────────────────────────────────────
         layout = forms.DynamicLayout()
@@ -537,7 +559,8 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(self.txt_email)
         layout.AddRow(make_label("Password"))
         layout.AddRow(self.txt_password)
-        layout.AddRow(self.tab_control)
+        layout.AddRow(tab_bar)
+        layout.AddRow(self.tab_content_panel)
 
         btn_panel = forms.Panel()
         btn_panel.BackgroundColor = COL_BG
@@ -546,6 +569,17 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(btn_panel)
 
         self.Content = layout
+        self._select_tab("A-Line")
+
+    def _make_tab_click_handler(self, name):
+        def handler(sender, e):
+            self._select_tab(name)
+        return handler
+
+    def _select_tab(self, name):
+        self.tab_content_panel.Content = self._tab_layouts[name]
+        for n, b in self._tab_buttons.items():
+            style_button(b, accent=(n == name))
 
     # ── A-Line tab ───────────────────────────────────────────────────────────
 
@@ -593,11 +627,7 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(self.lbl_status_aline)
         layout.AddRow(self.btn_send_aline)
 
-        page = forms.TabPage()
-        page.Text = "A-Line"
-        page.BackgroundColor = COL_BG
-        page.Content = layout
-        return page
+        return layout
 
     def on_select_aline_curve(self, sender, e):
         self.Visible = False
@@ -728,11 +758,7 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(self.lbl_status_void)
         layout.AddRow(self.btn_send_void)
 
-        page = forms.TabPage()
-        page.Text = "Void"
-        page.BackgroundColor = COL_BG
-        page.Content = layout
-        return page
+        return layout
 
     def on_select_voids(self, sender, e):
         self.Visible = False
@@ -848,11 +874,7 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(self.lbl_status_aisle)
         layout.AddRow(self.btn_send_aisle)
 
-        page = forms.TabPage()
-        page.Text = "Aisle"
-        page.BackgroundColor = COL_BG
-        page.Content = layout
-        return page
+        return layout
 
     def on_select_aisles(self, sender, e):
         self.Visible = False
@@ -952,11 +974,7 @@ class BowlConnectorDialog(forms.Form):
         layout.AddRow(self.lbl_status_pull)
         layout.AddRow(self.btn_pull_selected)
 
-        page = forms.TabPage()
-        page.Text = "Pull"
-        page.BackgroundColor = COL_BG
-        page.Content = layout
-        return page
+        return layout
 
     def on_list_bowls(self, sender, e):
         email    = self.txt_email.Text.strip()

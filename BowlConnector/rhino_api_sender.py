@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # rhino_api_sender_2.py
-# Popup panel to build and send an A-Line to the bowl backend.
+# Popup panel to push A-Lines / Voids / Aisle groups to, and pull a saved
+# Bowl's geometry snapshot from, the Seating Bowl Generator backend.
 
 import json
 import threading
@@ -59,11 +60,67 @@ def get_preview_points(curve):
     return [(p.X, p.Y, p.Z) for p in poly]
 
 
+def closed_curve_points(curve, samples=64):
+    """Closed curve -> list of (x, y) tuples, world XY, no repeated end point."""
+    if not curve.IsClosed:
+        raise RuntimeError("every void loop must be a closed curve")
+    ok, pl = curve.TryGetPolyline()
+    if ok:
+        pts = [(p.X, p.Y) for p in pl]
+    else:
+        params = curve.DivideByCount(samples, True) or []
+        pts = [(curve.PointAt(t).X, curve.PointAt(t).Y) for t in params]
+    if len(pts) > 1:
+        dx = pts[0][0] - pts[-1][0]
+        dy = pts[0][1] - pts[-1][1]
+        if (dx * dx + dy * dy) ** 0.5 < 1e-9:
+            pts = pts[:-1]
+    if len(pts) < 3:
+        raise RuntimeError("a loop needs at least 3 distinct points")
+    return pts
+
+
+def open_curve_points(curve, idx, samples=32):
+    """Open curve -> list of (x, y) tuples, world XY."""
+    if curve.IsClosed:
+        raise RuntimeError("curve {0} is closed — aisle centerlines must be OPEN".format(idx + 1))
+    ok, pl = curve.TryGetPolyline()
+    if ok:
+        pts = [(p.X, p.Y) for p in pl]
+    else:
+        params = curve.DivideByCount(samples, True) or []
+        pts = [(curve.PointAt(t).X, curve.PointAt(t).Y) for t in params]
+    if len(pts) < 2:
+        raise RuntimeError("curve {0} needs at least 2 points".format(idx + 1))
+    return pts
+
+
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 
-def post_json(url, data, token=None):
+class TimeoutWebClient(System.Net.WebClient):
+    """WebClient with a configurable request timeout (plain WebClient has none).
+    Used for the Pull tab, where the backend's free-tier host can take
+    30-60s to cold-start on the first request of the day."""
+
+    def __init__(self, timeout_ms):
+        System.Net.WebClient.__init__(self)
+        self._timeout_ms = timeout_ms
+
+    def GetWebRequest(self, address):
+        req = System.Net.WebClient.GetWebRequest(self, address)
+        req.Timeout = self._timeout_ms
+        return req
+
+
+def _web_client(timeout_ms=None):
+    if timeout_ms:
+        return TimeoutWebClient(timeout_ms)
+    return System.Net.WebClient()
+
+
+def post_json(url, data, token=None, timeout_ms=None):
     try:
-        client = System.Net.WebClient()
+        client = _web_client(timeout_ms)
         client.Headers.Add("Content-Type", "application/json")
         client.Headers.Add("Accept", "application/json")
         if token:
@@ -83,8 +140,67 @@ def post_json(url, data, token=None):
         raise RuntimeError(str(e))
 
 
-def login(email, password):
-    resp = post_json(BASE_URL + "/api/v1/auth/login", {"email": email, "password": password})
+def get_json(url, token=None, timeout_ms=None):
+    try:
+        client = _web_client(timeout_ms)
+        client.Headers.Add("Accept", "application/json")
+        if token:
+            client.Headers.Add("Authorization", "Bearer " + token)
+        response = client.DownloadString(url)
+        return json.loads(response)
+    except System.Net.WebException as e:
+        resp = e.Response
+        detail = ""
+        if resp:
+            stream = resp.GetResponseStream()
+            reader = System.IO.StreamReader(stream)
+            detail = reader.ReadToEnd()
+        raise RuntimeError("HTTP error: {0} — {1}".format(str(e.Message), detail[:300]))
+    except Exception as e:
+        raise RuntimeError(str(e))
+
+
+def get_binary(url, token=None, timeout_ms=None):
+    try:
+        client = _web_client(timeout_ms)
+        if token:
+            client.Headers.Add("Authorization", "Bearer " + token)
+        return client.DownloadData(url)
+    except System.Net.WebException as e:
+        resp = e.Response
+        status = int(resp.StatusCode) if resp else 0
+        if status == 404:
+            raise RuntimeError(
+                "no geometry snapshot for this bowl yet — open it in the web "
+                "app and hit Save once")
+        detail = ""
+        if resp:
+            stream = resp.GetResponseStream()
+            reader = System.IO.StreamReader(stream)
+            detail = reader.ReadToEnd()
+        raise RuntimeError("HTTP error: {0} — {1}".format(str(e.Message), detail[:300]))
+    except Exception as e:
+        raise RuntimeError(str(e))
+
+
+def gunzip_bytes(data):
+    """.NET byte[] (gzip) -> .NET byte[] (decompressed)."""
+    ms_in = System.IO.MemoryStream(data)
+    gz = System.IO.Compression.GZipStream(ms_in, System.IO.Compression.CompressionMode.Decompress)
+    ms_out = System.IO.MemoryStream()
+    buffer = System.Array.CreateInstance(System.Byte, 8192)
+    while True:
+        read = gz.Read(buffer, 0, buffer.Length)
+        if read <= 0:
+            break
+        ms_out.Write(buffer, 0, read)
+    gz.Close()
+    return ms_out.ToArray()
+
+
+def login(email, password, timeout_ms=None):
+    resp = post_json(BASE_URL + "/api/v1/auth/login",
+                      {"email": email, "password": password}, timeout_ms=timeout_ms)
     token = resp.get("token")
     if not token:
         raise RuntimeError("login succeeded but no token returned")
@@ -98,6 +214,147 @@ def create_aline(token, name, is_closed, pts):
         "points": [{"x": x, "y": y} for x, y in pts],
     }
     return post_json(BASE_URL + "/api/v1/alines", body, token=token)
+
+
+def create_void(token, name, loops, z1, z2):
+    body = {
+        "name": name,
+        "loops": [[{"x": x, "y": y} for x, y in loop] for loop in loops],
+        "z1": z1,
+        "z2": z2,
+    }
+    return post_json(BASE_URL + "/api/v1/voids", body, token=token)
+
+
+def create_aisle_group(token, name, paths):
+    body = {
+        "name": name,
+        "paths": [[{"x": x, "y": y} for x, y in path] for path in paths],
+    }
+    return post_json(BASE_URL + "/api/v1/aisles", body, token=token)
+
+
+def list_bowls(token):
+    return get_json(BASE_URL + "/api/v1/bowls", token=token, timeout_ms=180000)
+
+
+def download_bowl_export(token, bowl_id):
+    return get_binary(BASE_URL + "/api/v1/bowls/{0}/export".format(bowl_id),
+                       token=token, timeout_ms=180000)
+
+
+def import_3dm_bytes(data):
+    """Merge a .3dm byte blob into the active doc. Returns (added, deleted, unit_note)."""
+    if len(data) >= 2 and data[0] == 0x1f and data[1] == 0x8b:
+        data = gunzip_bytes(data)
+
+    f3dm = Rhino.FileIO.File3dm.FromByteArray(data)
+    if f3dm is None:
+        raise RuntimeError("server returned bytes that are not a valid .3dm file")
+
+    doc = sc.doc
+    scale = Rhino.RhinoMath.UnitScale(f3dm.Settings.ModelUnitSystem, doc.ModelUnitSystem)
+    xf = Rhino.Geometry.Transform.Scale(Rhino.Geometry.Point3d.Origin, scale)
+
+    # REPLACE-BY-LAYER: delete existing objects on any doc layer whose name
+    # matches an incoming layer, so re-pulling the same bowl updates in place.
+    deleted = 0
+    layer_map = {}
+    for layer in f3dm.AllLayers:
+        existing = doc.Layers.FindName(layer.Name)
+        if existing is not None:
+            for obj in (doc.Objects.FindByLayer(existing.Name) or []):
+                if doc.Objects.Delete(obj, True):
+                    deleted += 1
+            layer_map[layer.Index] = existing.Index
+        else:
+            new_layer = Rhino.DocObjects.Layer()
+            new_layer.Name = layer.Name
+            new_layer.Color = layer.Color
+            layer_map[layer.Index] = doc.Layers.Add(new_layer)
+
+    # SEAT BLOCKS: upsert instance definitions by name so a re-pull redefines
+    # the block in place; remember file-idef-id -> doc-idef-index for the
+    # instance references below.
+    file_objs_by_id = {}
+    for obj in f3dm.Objects:
+        file_objs_by_id[obj.Attributes.ObjectId] = obj
+
+    idef_index_map = {}
+    for idef in f3dm.AllInstanceDefinitions:
+        geoms = []
+        attrs_list = []
+        for gid in idef.GetObjectIds():
+            fobj = file_objs_by_id.get(gid)
+            if fobj is None or fobj.Geometry is None:
+                continue
+            g = fobj.Geometry.Duplicate()
+            if abs(scale - 1.0) > 1e-12:
+                g.Transform(xf)
+            geoms.append(g)
+            a = fobj.Attributes.Duplicate()
+            a.LayerIndex = layer_map.get(a.LayerIndex, doc.Layers.CurrentLayerIndex)
+            attrs_list.append(a)
+        if not geoms:
+            continue
+        existing = doc.InstanceDefinitions.Find(idef.Name)
+        if existing is not None:
+            doc.InstanceDefinitions.ModifyGeometry(existing.Index, geoms, attrs_list)
+            idef_index_map[idef.Id] = existing.Index
+        else:
+            new_idx = doc.InstanceDefinitions.Add(
+                idef.Name, idef.Description or "", Rhino.Geometry.Point3d.Origin,
+                geoms, attrs_list)
+            if new_idx >= 0:
+                idef_index_map[idef.Id] = new_idx
+
+    added = 0
+    skipped_refs = 0
+    for obj in f3dm.Objects:
+        geom = obj.Geometry
+        if geom is None:
+            continue
+        # Definition geometry lives in the object table too — skip it, the
+        # doc definitions above already carry it (else seats duplicate at origin).
+        if obj.Attributes.Mode == Rhino.DocObjects.ObjectMode.InstanceDefinitionObject:
+            continue
+
+        attrs = obj.Attributes.Duplicate()
+        attrs.LayerIndex = layer_map.get(attrs.LayerIndex, doc.Layers.CurrentLayerIndex)
+
+        if isinstance(geom, Rhino.Geometry.InstanceReferenceGeometry):
+            doc_idx = idef_index_map.get(geom.ParentIdefId)
+            if doc_idx is None:
+                skipped_refs += 1
+                continue
+            ref_xf = geom.Xform
+            if abs(scale - 1.0) > 1e-12:
+                # Conjugate: doc-unit block, placement scaled to doc units.
+                inv = Rhino.Geometry.Transform.Scale(Rhino.Geometry.Point3d.Origin, 1.0 / scale)
+                ref_xf = xf * ref_xf * inv
+            if doc.Objects.AddInstanceObject(doc_idx, ref_xf, attrs) != System.Guid.Empty:
+                added += 1
+            continue
+
+        geom = geom.Duplicate()
+        if abs(scale - 1.0) > 1e-12:
+            geom.Transform(xf)
+        if doc.Objects.Add(geom, attrs) != System.Guid.Empty:
+            added += 1
+
+    f3dm.Dispose()
+    doc.Views.Redraw()
+    if skipped_refs:
+        print("WARNING: {0} block instances skipped (missing definition)".format(skipped_refs))
+    unit_note = "" if abs(scale - 1.0) < 1e-12 else " (scaled x{0:g} to match doc units)".format(scale)
+    return added, deleted, unit_note
+
+
+def bowl_label(b):
+    count = b.get("sectionCount", 0)
+    plural = "" if count == 1 else "s"
+    updated = (b.get("updatedAt") or "?")[:16].replace("T", " ")
+    return "{0}   ({1} sweep{2}, updated {3})".format(b.get("name"), count, plural, updated)
 
 
 # ── UI helpers ───────────────────────────────────────────────────────────────
@@ -119,6 +376,14 @@ def style_button(btn, accent=False):
     btn.BackgroundColor = COL_ACCENT if accent else COL_SURFACE
     btn.TextColor = COL_TEXT
     return btn
+
+
+def make_tab_layout():
+    l = forms.DynamicLayout()
+    l.Padding = drawing.Padding(14)
+    l.DefaultSpacing = drawing.Size(6, 6)
+    l.BackgroundColor = COL_BG
+    return l
 
 
 # ── Rotating preview ─────────────────────────────────────────────────────────
@@ -224,18 +489,22 @@ class CurvePreview(forms.Drawable):
 
 # ── Dialog ───────────────────────────────────────────────────────────────────
 
-class ALineSenderDialog(forms.Form):
+class BowlConnectorDialog(forms.Form):
 
     def __init__(self):
         self.selected_curve_ids = []
         self.captured_pts = None  # snapshot of (x, y, z) points at time of selection
+        self.void_curve_ids = []
+        self.aisle_curve_ids = []
+        self._bowls = []
+        self._pull_token = None
 
         self.Title = "Seating Bowl Generator - Rhino Connector"
         self.Resizable = False
         self.AutoSize = True
         self.BackgroundColor = COL_BG
 
-        # ── Fields ──────────────────────────────────────────────────────────
+        # ── Shared login fields ──────────────────────────────────────────────
         self.txt_email = style_textbox(forms.TextBox())
         self.txt_email.PlaceholderText = "user@example.com"
         self.txt_email.Width = 340
@@ -244,42 +513,20 @@ class ALineSenderDialog(forms.Form):
         self.txt_password.Width = 340
         self.txt_password.Height = self.txt_email.Height if self.txt_email.Height > 0 else 22
 
-        self.txt_name = style_textbox(forms.TextBox())
-        self.txt_name.PlaceholderText = "A-Line name"
-        self.txt_name.Width = 340
-
-        self.chk_closed = forms.CheckBox()
-        self.chk_closed.Text = ""
-        self.chk_closed.Checked = True
-        self.lbl_closed = make_label("Closed polyline")
-
-        self.btn_select = style_button(forms.Button())
-        self.btn_select.Text = "Select Curve in Rhino"
-        self.btn_select.Width = 220
-        self.btn_select.Click += self.on_select_curve
-
-        self.lbl_curve_status = make_label("No curve selected.", muted=True)
-
-        self.preview = CurvePreview()
-
-        self.lbl_status = forms.Label()
-        self.lbl_status.Text = ""
-        self.lbl_status.Width = 340
-        self.lbl_status.TextColor = COL_ACCENT
-
-        self.btn_send = style_button(forms.Button(), accent=True)
-        self.btn_send.Text = "Send A-Line"
-        self.btn_send.MinimumSize = drawing.Size(160, 30)
-        self.btn_send.Size = drawing.Size(160, 30)
-        self.btn_send.Click += self.on_send
-
         self.btn_close = style_button(forms.Button())
         self.btn_close.Text = "Close"
         self.btn_close.MinimumSize = drawing.Size(100, 30)
         self.btn_close.Size = drawing.Size(100, 30)
         self.btn_close.Click += self.on_close
 
-        # ── Layout ──────────────────────────────────────────────────────────
+        self.tab_control = forms.TabControl()
+        self.tab_control.BackgroundColor = COL_BG
+        self.tab_control.Pages.Add(self._build_aline_tab())
+        self.tab_control.Pages.Add(self._build_void_tab())
+        self.tab_control.Pages.Add(self._build_aisle_tab())
+        self.tab_control.Pages.Add(self._build_pull_tab())
+
+        # ── Top-level layout ─────────────────────────────────────────────────
         layout = forms.DynamicLayout()
         layout.Padding = drawing.Padding(20)
         layout.Spacing = drawing.Size(0, 10)
@@ -290,35 +537,69 @@ class ALineSenderDialog(forms.Form):
         layout.AddRow(self.txt_email)
         layout.AddRow(make_label("Password"))
         layout.AddRow(self.txt_password)
+        layout.AddRow(self.tab_control)
+
+        btn_panel = forms.Panel()
+        btn_panel.BackgroundColor = COL_BG
+        btn_panel.Height = 32
+        btn_panel.Content = self.btn_close
+        layout.AddRow(btn_panel)
+
+        self.Content = layout
+
+    # ── A-Line tab ───────────────────────────────────────────────────────────
+
+    def _build_aline_tab(self):
+        self.txt_aline_name = style_textbox(forms.TextBox())
+        self.txt_aline_name.PlaceholderText = "A-Line name"
+        self.txt_aline_name.Width = 340
+
+        self.chk_closed = forms.CheckBox()
+        self.chk_closed.Text = ""
+        self.chk_closed.Checked = True
+        self.lbl_closed = make_label("Closed polyline")
+
+        self.btn_select_aline = style_button(forms.Button())
+        self.btn_select_aline.Text = "Select Curve in Rhino"
+        self.btn_select_aline.Width = 220
+        self.btn_select_aline.Click += self.on_select_aline_curve
+
+        self.lbl_aline_curve_status = make_label("No curve selected.", muted=True)
+
+        self.preview = CurvePreview()
+
+        self.lbl_status_aline = forms.Label()
+        self.lbl_status_aline.Text = ""
+        self.lbl_status_aline.Width = 340
+        self.lbl_status_aline.TextColor = COL_ACCENT
+
+        self.btn_send_aline = style_button(forms.Button(), accent=True)
+        self.btn_send_aline.Text = "Send A-Line"
+        self.btn_send_aline.MinimumSize = drawing.Size(160, 30)
+        self.btn_send_aline.Size = drawing.Size(160, 30)
+        self.btn_send_aline.Click += self.on_send_aline
+
+        layout = make_tab_layout()
         layout.AddRow(make_label("A-Line Name"))
-        layout.AddRow(self.txt_name)
+        layout.AddRow(self.txt_aline_name)
         chk_row = forms.DynamicLayout()
         chk_row.BackgroundColor = COL_BG
         chk_row.Spacing = drawing.Size(6, 0)
         chk_row.AddRow(self.chk_closed, self.lbl_closed)
         layout.AddRow(chk_row)
-        layout.AddRow(self.btn_select)
-        layout.AddRow(self.lbl_curve_status)
+        layout.AddRow(self.btn_select_aline)
+        layout.AddRow(self.lbl_aline_curve_status)
         layout.AddRow(self.preview)
-        layout.AddRow(self.lbl_status)
+        layout.AddRow(self.lbl_status_aline)
+        layout.AddRow(self.btn_send_aline)
 
-        btn_row = forms.TableLayout()
-        btn_row.Spacing = drawing.Size(10, 0)
-        btn_row.BackgroundColor = COL_BG
-        btn_row.Rows.Add(forms.TableRow(
-            forms.TableCell(self.btn_send, False),
-            forms.TableCell(self.btn_close, False),
-        ))
+        page = forms.TabPage()
+        page.Text = "A-Line"
+        page.BackgroundColor = COL_BG
+        page.Content = layout
+        return page
 
-        btn_panel = forms.Panel()
-        btn_panel.BackgroundColor = COL_BG
-        btn_panel.Height = 32
-        btn_panel.Content = btn_row
-        layout.AddRow(btn_panel)
-
-        self.Content = layout
-
-    def on_select_curve(self, sender, e):
+    def on_select_aline_curve(self, sender, e):
         self.Visible = False
         try:
             ids = rs.GetObjects(
@@ -328,7 +609,7 @@ class ALineSenderDialog(forms.Form):
             )
             if ids:
                 self.selected_curve_ids = list(ids)
-                self.lbl_curve_status.Text = "{0} curve(s) selected.".format(len(ids))
+                self.lbl_aline_curve_status.Text = "{0} curve(s) selected.".format(len(ids))
 
                 obj = sc.doc.Objects.FindId(self.selected_curve_ids[0])
                 curve = coerce_curve(obj) if obj else None
@@ -347,35 +628,35 @@ class ALineSenderDialog(forms.Form):
             else:
                 self.selected_curve_ids = []
                 self.captured_pts = None
-                self.lbl_curve_status.Text = "No curve selected."
+                self.lbl_aline_curve_status.Text = "No curve selected."
                 self.preview.live_points_fn = None
                 self.preview.set_points(None)
         finally:
             self.Visible = True
 
-    def on_send(self, sender, e):
+    def on_send_aline(self, sender, e):
         email     = self.txt_email.Text.strip()
         password  = self.txt_password.Text
-        name      = self.txt_name.Text.strip()
+        name      = self.txt_aline_name.Text.strip()
         is_closed = bool(self.chk_closed.Checked)
 
         if not email or not password:
-            self.lbl_status.Text = "Email and password are required."
+            self.lbl_status_aline.Text = "Email and password are required."
             return
         if not name:
-            self.lbl_status.Text = "Please enter an A-Line name."
+            self.lbl_status_aline.Text = "Please enter an A-Line name."
             return
         if not self.captured_pts:
-            self.lbl_status.Text = "No curve selected."
+            self.lbl_status_aline.Text = "No curve selected."
             return
 
         pts, err = extract_2d_points(self.captured_pts, is_closed)
         if err:
-            self.lbl_status.Text = err
+            self.lbl_status_aline.Text = err
             return
 
-        self.lbl_status.Text = "Sending..."
-        self.btn_send.Enabled = False
+        self.lbl_status_aline.Text = "Sending..."
+        self.btn_send_aline.Enabled = False
 
         captured = {
             "email": email, "password": password,
@@ -393,8 +674,8 @@ class ALineSenderDialog(forms.Form):
                 msg = "Error: " + str(ex)
 
             def update_ui():
-                self.lbl_status.Text = msg
-                self.btn_send.Enabled = True
+                self.lbl_status_aline.Text = msg
+                self.btn_send_aline.Enabled = True
 
             Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))
 
@@ -402,13 +683,374 @@ class ALineSenderDialog(forms.Form):
         t.daemon = True
         t.start()
 
+    # ── Void tab ─────────────────────────────────────────────────────────────
+
+    def _build_void_tab(self):
+        self.txt_void_name = style_textbox(forms.TextBox())
+        self.txt_void_name.PlaceholderText = "Void name"
+        self.txt_void_name.Width = 340
+
+        self.txt_void_z1 = style_textbox(forms.TextBox())
+        self.txt_void_z1.PlaceholderText = "Z1 (bottom elevation)"
+        self.txt_void_z1.Width = 340
+
+        self.txt_void_z2 = style_textbox(forms.TextBox())
+        self.txt_void_z2.PlaceholderText = "Z2 (top elevation)"
+        self.txt_void_z2.Width = 340
+
+        self.btn_select_voids = style_button(forms.Button())
+        self.btn_select_voids.Text = "Select Loops in Rhino"
+        self.btn_select_voids.Width = 220
+        self.btn_select_voids.Click += self.on_select_voids
+
+        self.lbl_void_status = make_label("No loops selected.", muted=True)
+
+        self.lbl_status_void = forms.Label()
+        self.lbl_status_void.Text = ""
+        self.lbl_status_void.Width = 340
+        self.lbl_status_void.TextColor = COL_ACCENT
+
+        self.btn_send_void = style_button(forms.Button(), accent=True)
+        self.btn_send_void.Text = "Send Void"
+        self.btn_send_void.MinimumSize = drawing.Size(160, 30)
+        self.btn_send_void.Size = drawing.Size(160, 30)
+        self.btn_send_void.Click += self.on_send_void
+
+        layout = make_tab_layout()
+        layout.AddRow(make_label("Void Name"))
+        layout.AddRow(self.txt_void_name)
+        layout.AddRow(make_label("Z1"))
+        layout.AddRow(self.txt_void_z1)
+        layout.AddRow(make_label("Z2"))
+        layout.AddRow(self.txt_void_z2)
+        layout.AddRow(self.btn_select_voids)
+        layout.AddRow(self.lbl_void_status)
+        layout.AddRow(self.lbl_status_void)
+        layout.AddRow(self.btn_send_void)
+
+        page = forms.TabPage()
+        page.Text = "Void"
+        page.BackgroundColor = COL_BG
+        page.Content = layout
+        return page
+
+    def on_select_voids(self, sender, e):
+        self.Visible = False
+        try:
+            ids = rs.GetObjects(
+                message="Select one or more closed loops for the void",
+                filter=rs.filter.curve,
+                preselect=True,
+            )
+            if ids:
+                self.void_curve_ids = list(ids)
+                self.lbl_void_status.Text = "{0} loop(s) selected.".format(len(ids))
+            else:
+                self.void_curve_ids = []
+                self.lbl_void_status.Text = "No loops selected."
+        finally:
+            self.Visible = True
+
+    def on_send_void(self, sender, e):
+        email    = self.txt_email.Text.strip()
+        password = self.txt_password.Text
+        name     = self.txt_void_name.Text.strip()
+        z1_text  = self.txt_void_z1.Text.strip()
+        z2_text  = self.txt_void_z2.Text.strip()
+
+        if not email or not password:
+            self.lbl_status_void.Text = "Email and password are required."
+            return
+        if not name:
+            self.lbl_status_void.Text = "Please enter a void name."
+            return
+        if not self.void_curve_ids:
+            self.lbl_status_void.Text = "No loops selected."
+            return
+        try:
+            z1 = float(z1_text)
+            z2 = float(z2_text)
+        except ValueError:
+            self.lbl_status_void.Text = "Z1 and Z2 must be numbers."
+            return
+
+        try:
+            loops = []
+            for cid in self.void_curve_ids:
+                obj = sc.doc.Objects.FindId(cid)
+                curve = coerce_curve(obj) if obj else None
+                if curve is None:
+                    raise RuntimeError("could not read one of the selected loops")
+                loops.append(closed_curve_points(curve))
+        except RuntimeError as ex:
+            self.lbl_status_void.Text = "Error: " + str(ex)
+            return
+
+        self.lbl_status_void.Text = "Sending..."
+        self.btn_send_void.Enabled = False
+
+        captured = {
+            "email": email, "password": password,
+            "name": name, "loops": loops, "z1": z1, "z2": z2,
+        }
+
+        def do_send():
+            try:
+                token = login(captured["email"], captured["password"])
+                v = create_void(token, captured["name"], captured["loops"],
+                                 captured["z1"], captured["z2"])
+                msg = "Created: id={0}  name={1}  loops={2}  z {3}..{4}".format(
+                    v.get("id"), v.get("name"), len(captured["loops"]),
+                    v.get("z1"), v.get("z2"))
+            except RuntimeError as ex:
+                msg = "Error: " + str(ex)
+
+            def update_ui():
+                self.lbl_status_void.Text = msg
+                self.btn_send_void.Enabled = True
+
+            Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))
+
+        t = threading.Thread(target=do_send)
+        t.daemon = True
+        t.start()
+
+    # ── Aisle tab ────────────────────────────────────────────────────────────
+
+    def _build_aisle_tab(self):
+        self.txt_aisle_name = style_textbox(forms.TextBox())
+        self.txt_aisle_name.PlaceholderText = "Aisle group name"
+        self.txt_aisle_name.Width = 340
+
+        self.btn_select_aisles = style_button(forms.Button())
+        self.btn_select_aisles.Text = "Select Aisle Paths in Rhino"
+        self.btn_select_aisles.Width = 220
+        self.btn_select_aisles.Click += self.on_select_aisles
+
+        self.lbl_aisle_status = make_label("No paths selected.", muted=True)
+
+        self.lbl_status_aisle = forms.Label()
+        self.lbl_status_aisle.Text = ""
+        self.lbl_status_aisle.Width = 340
+        self.lbl_status_aisle.TextColor = COL_ACCENT
+
+        self.btn_send_aisle = style_button(forms.Button(), accent=True)
+        self.btn_send_aisle.Text = "Send Aisle Group"
+        self.btn_send_aisle.MinimumSize = drawing.Size(160, 30)
+        self.btn_send_aisle.Size = drawing.Size(160, 30)
+        self.btn_send_aisle.Click += self.on_send_aisle
+
+        layout = make_tab_layout()
+        layout.AddRow(make_label("Aisle Group Name"))
+        layout.AddRow(self.txt_aisle_name)
+        layout.AddRow(self.btn_select_aisles)
+        layout.AddRow(self.lbl_aisle_status)
+        layout.AddRow(self.lbl_status_aisle)
+        layout.AddRow(self.btn_send_aisle)
+
+        page = forms.TabPage()
+        page.Text = "Aisle"
+        page.BackgroundColor = COL_BG
+        page.Content = layout
+        return page
+
+    def on_select_aisles(self, sender, e):
+        self.Visible = False
+        try:
+            ids = rs.GetObjects(
+                message="Select one or more open aisle centerline curves",
+                filter=rs.filter.curve,
+                preselect=True,
+            )
+            if ids:
+                self.aisle_curve_ids = list(ids)
+                self.lbl_aisle_status.Text = "{0} path(s) selected.".format(len(ids))
+            else:
+                self.aisle_curve_ids = []
+                self.lbl_aisle_status.Text = "No paths selected."
+        finally:
+            self.Visible = True
+
+    def on_send_aisle(self, sender, e):
+        email    = self.txt_email.Text.strip()
+        password = self.txt_password.Text
+        name     = self.txt_aisle_name.Text.strip()
+
+        if not email or not password:
+            self.lbl_status_aisle.Text = "Email and password are required."
+            return
+        if not name:
+            self.lbl_status_aisle.Text = "Please enter an aisle group name."
+            return
+        if not self.aisle_curve_ids:
+            self.lbl_status_aisle.Text = "No paths selected."
+            return
+
+        try:
+            paths = []
+            for i, cid in enumerate(self.aisle_curve_ids):
+                obj = sc.doc.Objects.FindId(cid)
+                curve = coerce_curve(obj) if obj else None
+                if curve is None:
+                    raise RuntimeError("could not read one of the selected paths")
+                paths.append(open_curve_points(curve, i))
+        except RuntimeError as ex:
+            self.lbl_status_aisle.Text = "Error: " + str(ex)
+            return
+
+        self.lbl_status_aisle.Text = "Sending..."
+        self.btn_send_aisle.Enabled = False
+
+        captured = {"email": email, "password": password, "name": name, "paths": paths}
+
+        def do_send():
+            try:
+                token = login(captured["email"], captured["password"])
+                group = create_aisle_group(token, captured["name"], captured["paths"])
+                msg = "Created: id={0}  name={1}  paths={2}".format(
+                    group.get("id"), group.get("name"), len(captured["paths"]))
+            except RuntimeError as ex:
+                msg = "Error: " + str(ex)
+
+            def update_ui():
+                self.lbl_status_aisle.Text = msg
+                self.btn_send_aisle.Enabled = True
+
+            Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))
+
+        t = threading.Thread(target=do_send)
+        t.daemon = True
+        t.start()
+
+    # ── Pull tab ─────────────────────────────────────────────────────────────
+
+    def _build_pull_tab(self):
+        self.btn_list_bowls = style_button(forms.Button())
+        self.btn_list_bowls.Text = "List My Bowls"
+        self.btn_list_bowls.Width = 220
+        self.btn_list_bowls.Click += self.on_list_bowls
+
+        self.lst_bowls = forms.ListBox()
+        self.lst_bowls.Size = drawing.Size(340, 120)
+        self.lst_bowls.BackgroundColor = COL_SURFACE
+        self.lst_bowls.TextColor = COL_TEXT
+
+        self.lbl_status_pull = forms.Label()
+        self.lbl_status_pull.Text = "Log in above, then List My Bowls."
+        self.lbl_status_pull.Width = 340
+        self.lbl_status_pull.TextColor = COL_ACCENT
+
+        self.btn_pull_selected = style_button(forms.Button(), accent=True)
+        self.btn_pull_selected.Text = "Pull Selected Bowl"
+        self.btn_pull_selected.MinimumSize = drawing.Size(160, 30)
+        self.btn_pull_selected.Size = drawing.Size(160, 30)
+        self.btn_pull_selected.Click += self.on_pull_selected
+
+        layout = make_tab_layout()
+        layout.AddRow(self.btn_list_bowls)
+        layout.AddRow(self.lst_bowls)
+        layout.AddRow(self.lbl_status_pull)
+        layout.AddRow(self.btn_pull_selected)
+
+        page = forms.TabPage()
+        page.Text = "Pull"
+        page.BackgroundColor = COL_BG
+        page.Content = layout
+        return page
+
+    def on_list_bowls(self, sender, e):
+        email    = self.txt_email.Text.strip()
+        password = self.txt_password.Text
+
+        if not email or not password:
+            self.lbl_status_pull.Text = "Email and password are required."
+            return
+
+        self.lbl_status_pull.Text = "Logging in (may take up to a minute on a cold start)..."
+        self.btn_list_bowls.Enabled = False
+
+        captured = {"email": email, "password": password}
+
+        def do_list():
+            token = None
+            bowls = []
+            err = None
+            try:
+                token = login(captured["email"], captured["password"], timeout_ms=180000)
+                bowls = list_bowls(token)
+            except RuntimeError as ex:
+                err = str(ex)
+
+            def update_ui():
+                self.btn_list_bowls.Enabled = True
+                if err:
+                    self.lbl_status_pull.Text = "Error: " + err
+                    return
+                self._pull_token = token
+                self._bowls = bowls
+                self.lst_bowls.Items.Clear()
+                if not bowls:
+                    self.lbl_status_pull.Text = "No saved bowls on this account — save one in the web app first."
+                    return
+                for b in bowls:
+                    self.lst_bowls.Items.Add(bowl_label(b))
+                self.lbl_status_pull.Text = "{0} bowl(s) loaded — pick one and Pull.".format(len(bowls))
+
+            Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))
+
+        t = threading.Thread(target=do_list)
+        t.daemon = True
+        t.start()
+
+    def on_pull_selected(self, sender, e):
+        if not self._pull_token:
+            self.lbl_status_pull.Text = "List bowls first."
+            return
+        idx = self.lst_bowls.SelectedIndex
+        if idx is None or idx < 0 or idx >= len(self._bowls):
+            self.lbl_status_pull.Text = "Select a bowl from the list."
+            return
+        bowl = self._bowls[idx]
+        token = self._pull_token
+
+        self.lbl_status_pull.Text = "Downloading '{0}' ...".format(bowl.get("name"))
+        self.btn_pull_selected.Enabled = False
+
+        def do_pull():
+            data = None
+            err = None
+            try:
+                data = download_bowl_export(token, bowl["id"])
+            except RuntimeError as ex:
+                err = str(ex)
+
+            def finish():
+                self.btn_pull_selected.Enabled = True
+                if err:
+                    self.lbl_status_pull.Text = "Error: " + err
+                    return
+                try:
+                    added, deleted, unit_note = import_3dm_bytes(data)
+                    self.lbl_status_pull.Text = "OK — '{0}': {1} added, {2} replaced{3}.".format(
+                        bowl.get("name"), added, deleted, unit_note)
+                except Exception as ex:
+                    self.lbl_status_pull.Text = "Error: " + str(ex)
+
+            Rhino.RhinoApp.InvokeOnUiThread(System.Action(finish))
+
+        t = threading.Thread(target=do_pull)
+        t.daemon = True
+        t.start()
+
+    # ── Shared ───────────────────────────────────────────────────────────────
+
     def on_close(self, sender, e):
         self.preview.timer.Stop()
         self.Close()
 
 
 def main():
-    dialog = ALineSenderDialog()
+    dialog = BowlConnectorDialog()
     main_win = Rhino.UI.RhinoEtoApp.MainWindow
     dialog.Owner = main_win
     dialog.Location = drawing.Point(

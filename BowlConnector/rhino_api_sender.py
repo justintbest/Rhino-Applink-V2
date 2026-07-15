@@ -83,7 +83,7 @@ def closed_curve_points(curve, samples=64):
 def open_curve_points(curve, idx, samples=32):
     """Open curve -> list of (x, y) tuples, world XY."""
     if curve.IsClosed:
-        raise RuntimeError("curve {0} is closed — aisle centerlines must be OPEN".format(idx + 1))
+        raise RuntimeError("curve {0} is closed - aisle centerlines must be OPEN".format(idx + 1))
     ok, pl = curve.TryGetPolyline()
     if ok:
         pts = [(p.X, p.Y) for p in pl]
@@ -135,7 +135,7 @@ def post_json(url, data, token=None, timeout_ms=None):
             stream = resp.GetResponseStream()
             reader = System.IO.StreamReader(stream)
             detail = reader.ReadToEnd()
-        raise RuntimeError("HTTP error: {0} — {1}".format(str(e.Message), detail[:300]))
+        raise RuntimeError("HTTP error: {0} - {1}".format(str(e.Message), detail[:300]))
     except Exception as e:
         raise RuntimeError(str(e))
 
@@ -155,7 +155,7 @@ def get_json(url, token=None, timeout_ms=None):
             stream = resp.GetResponseStream()
             reader = System.IO.StreamReader(stream)
             detail = reader.ReadToEnd()
-        raise RuntimeError("HTTP error: {0} — {1}".format(str(e.Message), detail[:300]))
+        raise RuntimeError("HTTP error: {0} - {1}".format(str(e.Message), detail[:300]))
     except Exception as e:
         raise RuntimeError(str(e))
 
@@ -171,14 +171,14 @@ def get_binary(url, token=None, timeout_ms=None):
         status = int(resp.StatusCode) if resp else 0
         if status == 404:
             raise RuntimeError(
-                "no geometry snapshot for this bowl yet — open it in the web "
+                "no geometry snapshot for this bowl yet - open it in the web "
                 "app and hit Save once")
         detail = ""
         if resp:
             stream = resp.GetResponseStream()
             reader = System.IO.StreamReader(stream)
             detail = reader.ReadToEnd()
-        raise RuntimeError("HTTP error: {0} — {1}".format(str(e.Message), detail[:300]))
+        raise RuntimeError("HTTP error: {0} - {1}".format(str(e.Message), detail[:300]))
     except Exception as e:
         raise RuntimeError(str(e))
 
@@ -314,7 +314,7 @@ def import_3dm_bytes(data):
         geom = obj.Geometry
         if geom is None:
             continue
-        # Definition geometry lives in the object table too — skip it, the
+        # Definition geometry lives in the object table too - skip it, the
         # doc definitions above already carry it (else seats duplicate at origin).
         if obj.Attributes.Mode == Rhino.DocObjects.ObjectMode.InstanceDefinitionObject:
             continue
@@ -394,7 +394,7 @@ class CurvePreview(forms.Drawable):
     def __init__(self):
         self.Size = drawing.Size(340, 160)
         self.BackgroundColor = COL_SURFACE
-        self.points = None  # list of (x, y, z) — live, may update each tick
+        self.points = None  # list of (x, y, z) - live, may update each tick
         self.angle = 0.0
         self.fixed_extent = None
         self.live_points_fn = None  # optional callable returning fresh points
@@ -990,11 +990,11 @@ class BowlConnectorDialog(forms.Form):
                 self._bowls = bowls
                 self.lst_bowls.Items.Clear()
                 if not bowls:
-                    self.lbl_status_pull.Text = "No saved bowls on this account — save one in the web app first."
+                    self.lbl_status_pull.Text = "No saved bowls on this account - save one in the web app first."
                     return
                 for b in bowls:
                     self.lst_bowls.Items.Add(bowl_label(b))
-                self.lbl_status_pull.Text = "{0} bowl(s) loaded — pick one and Pull.".format(len(bowls))
+                self.lbl_status_pull.Text = "{0} bowl(s) loaded - pick one and Pull.".format(len(bowls))
 
             Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))
 
@@ -1031,7 +1031,7 @@ class BowlConnectorDialog(forms.Form):
                     return
                 try:
                     added, deleted, unit_note = import_3dm_bytes(data)
-                    self.lbl_status_pull.Text = "OK — '{0}': {1} added, {2} replaced{3}.".format(
+                    self.lbl_status_pull.Text = "OK - '{0}': {1} added, {2} replaced{3}.".format(
                         bowl.get("name"), added, deleted, unit_note)
                 except Exception as ex:
                     self.lbl_status_pull.Text = "Error: " + str(ex)

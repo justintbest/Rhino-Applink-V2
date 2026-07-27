@@ -261,9 +261,22 @@ just a local drag-and-drop test package.
   description, then yanked (`yak yank bowl-connector-v1 1.0.0.1` — yanking
   unlists from the server, it does not free up the version number for
   reuse) so it could be replaced with corrected metadata.
-- `1.0.0.2` is the current correct version: `authors: [Justin Best,
-  Hailong Li]`, `description: Connector for the Seating Bowl Generator`.
-  Pushed and live.
+- `1.0.0.2` shipped `authors: [Justin Best, Hailong Li]`, `description:
+  Connector for the Seating Bowl Generator`. It was later yanked (`yak
+  yank bowl-connector-v1 1.0.0.2`) to make way for `1.0.0.3` below —
+  not because its metadata was wrong, but because the *code* had moved
+  on (Void/Aisle/Pull tabs) and yanking the stale version avoids anyone
+  installing the old A-Line-only build from search.
+- `1.0.0.3` is the current live version — same authors/description as
+  `1.0.0.2`, but the popup itself grew three new tabs (Void, Aisle,
+  Pull; see "Rhino/Grasshopper integration" push/pull endpoints above)
+  alongside two bugfixes: em dashes in user-facing status/error text
+  were replaced with plain ASCII hyphens (Rhino's classic IronPython
+  exec path doesn't reliably decode UTF-8, so `—` rendered as mojibake
+  like `â`), and the tab bar was rebuilt from plain styled buttons
+  instead of Eto's native `TabControl`/`TabPage` (their header text
+  uses OS-themed coloring Eto can't override, which rendered
+  unreadable-dark against this dialog's background).
 - Rhino's local Plug-ins/Package-Manager detail panel for an
   **installed-but-not-yet-published** local test build often shows blank
   Author/Description/Date-published/Url fields — those particular fields

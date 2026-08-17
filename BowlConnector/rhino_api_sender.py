@@ -401,11 +401,32 @@ def import_3dm_bytes(data, bowl_name):
     return added, deleted, unit_note
 
 
-def bowl_label(b):
+def parse_updated_at(iso_str):
+    """Backend ISO8601 UTC string -> System.DateTimeOffset, or MinValue if
+    missing/unparseable (sorts to the bottom, formats as "unknown")."""
+    if not iso_str:
+        return System.DateTimeOffset.MinValue
+    try:
+        return System.DateTimeOffset.Parse(iso_str, System.Globalization.CultureInfo.InvariantCulture)
+    except Exception:
+        return System.DateTimeOffset.MinValue
+
+
+def format_updated_at(dto):
+    """DateTimeOffset (UTC) -> local time, e.g. "Aug 14, 2026 3:15 pm"."""
+    if dto is None or dto == System.DateTimeOffset.MinValue:
+        return "unknown"
+    local = dto.LocalDateTime
+    date_part = local.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)
+    time_part = local.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture).lower()
+    return "{0} {1}".format(date_part, time_part)
+
+
+def bowl_label(b, updated_dto):
     count = b.get("sectionCount", 0)
     plural = "" if count == 1 else "s"
-    updated = (b.get("updatedAt") or "?")[:16].replace("T", " ")
-    return "{0}   ({1} sweep{2}, updated {3})".format(b.get("name"), count, plural, updated)
+    return "{0}   ({1} sweep{2}, updated {3})".format(
+        b.get("name"), count, plural, format_updated_at(updated_dto))
 
 
 # ── UI helpers ───────────────────────────────────────────────────────────────
@@ -1056,13 +1077,17 @@ class BowlConnectorDialog(forms.Form):
                     self.lbl_status_pull.Text = "Error: " + err
                     return
                 self._pull_token = token
-                self._bowls = bowls
                 self.lst_bowls.Items.Clear()
                 if not bowls:
+                    self._bowls = []
                     self.lbl_status_pull.Text = "No saved bowls on this account - save one in the web app first."
                     return
-                for b in bowls:
-                    self.lst_bowls.Items.Add(bowl_label(b))
+                # newest-first
+                sortable = [(parse_updated_at(b.get("updatedAt")), b) for b in bowls]
+                sortable.sort(key=lambda pair: pair[0], reverse=True)
+                self._bowls = [b for _, b in sortable]
+                for dto, b in sortable:
+                    self.lst_bowls.Items.Add(bowl_label(b, dto))
                 self.lbl_status_pull.Text = "{0} bowl(s) loaded - pick one and Pull.".format(len(bowls))
 
             Rhino.RhinoApp.InvokeOnUiThread(System.Action(update_ui))

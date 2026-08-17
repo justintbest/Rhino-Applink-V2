@@ -243,7 +243,7 @@ def download_bowl_export(token, bowl_id):
                        token=token, timeout_ms=180000)
 
 
-def import_3dm_bytes(data):
+def import_3dm_bytes(data, bowl_name):
     """Merge a .3dm byte blob into the active doc. Returns (added, deleted, unit_note)."""
     if len(data) >= 2 and data[0] == 0x1f and data[1] == 0x8b:
         data = gunzip_bytes(data)
@@ -256,14 +256,36 @@ def import_3dm_bytes(data):
     scale = Rhino.RhinoMath.UnitScale(f3dm.Settings.ModelUnitSystem, doc.ModelUnitSystem)
     xf = Rhino.Geometry.Transform.Scale(Rhino.Geometry.Point3d.Origin, scale)
 
-    # REPLACE-BY-LAYER: delete existing objects on any doc layer whose name
-    # matches an incoming layer, so re-pulling the same bowl updates in place.
+    # BOWL-SCOPED LAYERS: every bowl exports identically-named layers
+    # ("Sweep 1 A-Line", "Section Annotations", ...), so nest each pull
+    # under a top-level layer named after the bowl. Re-pulling the SAME
+    # bowl finds and reuses its own parent layer (update in place);
+    # pulling a DIFFERENT bowl gets its own parent and never touches
+    # another bowl's sublayers even though the leaf names collide.
+    parent_id = System.Guid.Empty
+    for lyr in doc.Layers:
+        if lyr.Name == bowl_name and lyr.ParentLayerId == System.Guid.Empty:
+            parent_id = lyr.Id
+            break
+    if parent_id == System.Guid.Empty:
+        bowl_layer = Rhino.DocObjects.Layer()
+        bowl_layer.Name = bowl_name
+        bowl_idx = doc.Layers.Add(bowl_layer)
+        parent_id = doc.Layers[bowl_idx].Id
+
+    # REPLACE-BY-LAYER: delete existing objects on any doc sublayer (under
+    # this bowl's parent layer) whose name matches an incoming layer, so
+    # re-pulling the same bowl updates in place.
     deleted = 0
     layer_map = {}
     for layer in f3dm.AllLayers:
-        existing = doc.Layers.FindName(layer.Name)
+        existing = None
+        for lyr in doc.Layers:
+            if lyr.Name == layer.Name and lyr.ParentLayerId == parent_id:
+                existing = lyr
+                break
         if existing is not None:
-            for obj in (doc.Objects.FindByLayer(existing.Name) or []):
+            for obj in (doc.Objects.FindByLayer(existing) or []):
                 if doc.Objects.Delete(obj, True):
                     deleted += 1
             layer_map[layer.Index] = existing.Index
@@ -271,6 +293,7 @@ def import_3dm_bytes(data):
             new_layer = Rhino.DocObjects.Layer()
             new_layer.Name = layer.Name
             new_layer.Color = layer.Color
+            new_layer.ParentLayerId = parent_id
             layer_map[layer.Index] = doc.Layers.Add(new_layer)
 
     # SEAT BLOCKS: upsert instance definitions by name so a re-pull redefines
@@ -1048,7 +1071,7 @@ class BowlConnectorDialog(forms.Form):
                     self.lbl_status_pull.Text = "Error: " + err
                     return
                 try:
-                    added, deleted, unit_note = import_3dm_bytes(data)
+                    added, deleted, unit_note = import_3dm_bytes(data, bowl.get("name") or "Pulled Bowl")
                     self.lbl_status_pull.Text = "OK - '{0}': {1} added, {2} replaced{3}.".format(
                         bowl.get("name"), added, deleted, unit_note)
                 except Exception as ex:

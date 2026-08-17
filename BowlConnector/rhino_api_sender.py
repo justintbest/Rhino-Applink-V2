@@ -298,13 +298,41 @@ def import_3dm_bytes(data, bowl_name):
 
     # SEAT BLOCKS: upsert instance definitions by name so a re-pull redefines
     # the block in place; remember file-idef-id -> doc-idef-index for the
-    # instance references below.
+    # instance references below. Definition backing geometry is shared
+    # across every bowl that uses that seat width (upsert-by-name), so it
+    # doesn't belong under any one bowl's layer tree - host it on its own
+    # "Seat Blocks" parent layer (one sublayer per distinct width, e.g.
+    # "Seat 24inch") instead, so toggling a bowl's layers can never hide
+    # another bowl's seats. Placed seat INSTANCES further below are
+    # unaffected by this and stay scoped to their own bowl as before.
+    seat_blocks_parent_id = System.Guid.Empty
+    for lyr in doc.Layers:
+        if lyr.Name == "Seat Blocks" and lyr.ParentLayerId == System.Guid.Empty:
+            seat_blocks_parent_id = lyr.Id
+            break
+    if seat_blocks_parent_id == System.Guid.Empty:
+        seat_blocks_layer = Rhino.DocObjects.Layer()
+        seat_blocks_layer.Name = "Seat Blocks"
+        seat_blocks_idx = doc.Layers.Add(seat_blocks_layer)
+        seat_blocks_parent_id = doc.Layers[seat_blocks_idx].Id
+
     file_objs_by_id = {}
     for obj in f3dm.Objects:
         file_objs_by_id[obj.Attributes.ObjectId] = obj
 
     idef_index_map = {}
     for idef in f3dm.AllInstanceDefinitions:
+        seat_layer_index = None
+        for lyr in doc.Layers:
+            if lyr.Name == idef.Name and lyr.ParentLayerId == seat_blocks_parent_id:
+                seat_layer_index = lyr.Index
+                break
+        if seat_layer_index is None:
+            seat_layer = Rhino.DocObjects.Layer()
+            seat_layer.Name = idef.Name
+            seat_layer.ParentLayerId = seat_blocks_parent_id
+            seat_layer_index = doc.Layers.Add(seat_layer)
+
         geoms = []
         attrs_list = []
         for gid in idef.GetObjectIds():
@@ -316,7 +344,7 @@ def import_3dm_bytes(data, bowl_name):
                 g.Transform(xf)
             geoms.append(g)
             a = fobj.Attributes.Duplicate()
-            a.LayerIndex = layer_map.get(a.LayerIndex, doc.Layers.CurrentLayerIndex)
+            a.LayerIndex = seat_layer_index
             attrs_list.append(a)
         if not geoms:
             continue
